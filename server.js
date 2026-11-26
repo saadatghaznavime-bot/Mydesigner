@@ -148,9 +148,45 @@ async function generateWithGemini(brief) {
   return { image: `data:${mimeType};base64,${imageData}`, provider: 'gemini' };
 }
 
+async function ollamaRequest(pathname, options = {}) {
+  const base = String(process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\\/+$/, '');
+  const response = await fetch(base + pathname, { ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Ollama returned ${response.status}.`);
+  return payload;
+}
+
+async function listOllamaModels() {
+  const payload = await ollamaRequest('/api/tags');
+  return (payload.models || []).map(model => model.name).filter(Boolean);
+}
+
+async function generateWithOllama(brief) {
+  const model = process.env.OLLAMA_MODEL || 'qwen3:4b';
+  const landscape = /linkedin/i.test(String(brief.format || ''));
+  const prompt = [
+    'You are Mydesigner, an expert graphic-design art director.',
+    'Analyze this brief and return a concise, specific visual art-direction concept for the design background.',
+    'Do not claim to generate or return an image. The editor will use this concept as a text brief.',
+    designPrompt(brief)
+  ].join('\\n\\n');
+  const payload = await ollamaRequest('/api/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      model,
+      stream: false,
+      messages: [{ role: 'user', content: prompt }],
+      options: { temperature: 0.7 }
+    })
+  });
+  const concept = payload.message?.content?.trim();
+  if (!concept) return { error: 'Ollama returned an empty response.', status: 502 };
+  return { concept, provider: 'ollama', model, demo: false, note: 'Ollama text planning is connected. It does not generate the image layer; use an image-generation provider for that step.' };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const provider = String(process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? 'gemini' : process.env.OPENAI_API_KEY ? 'openai' : 'demo')).toLowerCase();
+  const provider = String(process.env.AI_PROVIDER || (process.env.OLLAMA_URL ? 'ollama' : process.env.GEMINI_API_KEY ? 'gemini' : process.env.OPENAI_API_KEY ? 'openai' : 'demo')).toLowerCase();
   if (req.method === 'POST' && url.pathname === '/api/login') {
     if (!privatePreviewRequired()) return json(res, 200, { ok: true });
     if (!process.env.DEMO_PASSWORD) return json(res, 503, { error: 'Private preview access is not configured yet.' });
@@ -176,19 +212,28 @@ const server = http.createServer(async (req, res) => {
     }
     return json(res, 401, { error: 'Enter the investor preview access code first.' });
   }
-  if (req.method === 'GET' && url.pathname === '/api/status') return json(res, 200, { aiConfigured: provider === 'demo' || (provider === 'openai' && Boolean(process.env.OPENAI_API_KEY)) || (provider === 'gemini' && Boolean(process.env.GEMINI_API_KEY)), provider, demoMode: provider === 'demo', privatePreview: privatePreviewRequired() });
+  if (req.method === 'GET' && url.pathname === '/api/status') return json(res, 200, { aiConfigured: provider === 'demo' || (provider === 'openai' && Boolean(process.env.OPENAI_API_KEY)) || (provider === 'gemini' && Boolean(process.env.GEMINI_API_KEY)) || (provider === 'ollama' && Boolean(process.env.OLLAMA_MODEL || 'qwen3:4b')), provider, demoMode: provider === 'demo', privatePreview: privatePreviewRequired(), ollamaModel: process.env.OLLAMA_MODEL || 'qwen3:4b' });
+  if (req.method === 'GET' && url.pathname === '/api/ollama/models') {
+    try { return json(res, 200, { models: await listOllamaModels(), defaultModel: process.env.OLLAMA_MODEL || 'qwen3:4b' }); }
+    catch (error) { return json(res, 502, { error: error.message, models: [] }); }
+  }
   if (req.method === 'POST' && url.pathname === '/api/generate') {
     if (!generationAllowed(req)) return json(res, 429, { error: 'Demo limit reached for this minute. Please try again shortly.' });
     try {
       const brief = await readBody(req);
       if (provider === 'demo') return json(res, 200, makeDemoArtwork(brief));
+      if (provider === 'ollama') {
+        const generated = await generateWithOllama(brief);
+        if (generated.error) return json(res, generated.status, { error: generated.error });
+        return json(res, 200, generated);
+      }
       if (provider === 'gemini') {
         if (!process.env.GEMINI_API_KEY) return json(res, 503, { error: 'AI_PROVIDER is set to gemini but GEMINI_API_KEY is missing from .env.' });
         const generated = await generateWithGemini(brief);
         if (generated.error) return json(res, generated.status, { error: generated.error });
         return json(res, 200, generated);
       }
-      if (provider !== 'openai') return json(res, 500, { error: `Unknown AI_PROVIDER "${provider}". Use "demo", "gemini", or "openai".` });
+      if (provider !== 'openai') return json(res, 500, { error: `Unknown AI_PROVIDER "${provider}". Use "demo", "ollama", "gemini", or "openai".` });
       if (!process.env.OPENAI_API_KEY) return json(res, 503, { error: 'AI_PROVIDER is set to openai but OPENAI_API_KEY is missing from .env.' });
       const prompt = designPrompt(brief);
       const landscape = String(brief.format || '').toLowerCase().includes('linkedin');
