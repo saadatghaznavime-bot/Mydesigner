@@ -27,11 +27,22 @@
   const targetFor = layer => layer?.dataset.target ? (document.getElementById(layer.dataset.target) || $('.' + CSS.escape(layer.dataset.target), art)) : null;
   const layers = () => $$('.layer');
   function layerCount() { $('#layerCount').textContent = layers().length; }
+  function refreshLayerThumbnails() {
+    layers().forEach(layer => {
+      const el = targetFor(layer), thumb = $('.layer-thumb', layer); if (!el || !thumb) return;
+      const image = $('img', el), text = (el.textContent || '').trim().replace(/\s+/g, ' ');
+      thumb.replaceChildren(); thumb.style.backgroundImage = ''; thumb.style.backgroundSize = 'cover'; thumb.style.backgroundPosition = 'center';
+      if (image?.src) { thumb.style.background = '#e8e9ed'; const preview = document.createElement('img'); preview.src = image.src; preview.alt = ''; preview.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;border-radius:3px'; thumb.append(preview); }
+      else if (el.classList.contains('user-shape')) { thumb.style.background = el.style.backgroundColor || '#f4510b'; }
+      else if (el.classList.contains('user-brush')) { thumb.style.background = 'linear-gradient(145deg,#fff 0 44%,#f4510b 45% 54%,#fff 55%)'; }
+      else { thumb.style.background = getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)' ? '#f2efff' : getComputedStyle(el).backgroundColor; thumb.textContent = text.slice(0, 5) || 'Aa'; thumb.style.color = getComputedStyle(el).color; thumb.style.fontSize = '10px'; thumb.style.fontWeight = '700'; thumb.style.overflow = 'hidden'; thumb.style.padding = '4px'; }
+    });
+  }
   function save() {
     const cleanArt = art.cloneNode(true); cleanArt.querySelectorAll('.resize-handle,.selection').forEach(x => x.remove()); cleanArt.querySelectorAll('.selected-object').forEach(x => x.classList.remove('selected-object'));
     cleanArt.querySelectorAll('.headline,.poster-sub,.poster-cta,.poster-brand,.user-text').forEach(x => x.removeAttribute('contenteditable'));
     const state = { name: name(), format: $('#projectName .crumb')?.textContent.replace(/^\/\s*/, '') || 'Instagram Post', html: cleanArt.innerHTML, style: art.getAttribute('style') || '', layers: $('#layers').innerHTML, prompts: $$('.prompt-text').map(x => x.value), brand: $$('.brand-fields .field').map(x => x.value), references: $$('.upload-row img.thumb').map(img => ({ section: img.dataset.section || '', dataUrl: img.src })), adjustment: { ...adjustment } };
-    try { const projects = readProjects(); projects[projectId] = state; localStorage.setItem(storageKey, JSON.stringify(projects)); localStorage.setItem(activeKey, projectId); refreshProjectPicker(); $('.status').innerHTML = '<span class="dot"></span> All changes saved'; }
+    try { refreshLayerThumbnails(); const projects = readProjects(); projects[projectId] = state; localStorage.setItem(storageKey, JSON.stringify(projects)); localStorage.setItem(activeKey, projectId); refreshProjectPicker(); $('.status').innerHTML = '<span class="dot"></span> All changes saved'; }
     catch { $('.status').textContent = 'Storage full · export your work'; }
   }
   function historyState() { const clean = art.cloneNode(true); clean.querySelectorAll('.resize-handle,.selection').forEach(x => x.remove()); clean.querySelectorAll('.selected-object').forEach(x => x.classList.remove('selected-object')); clean.querySelectorAll('.headline,.poster-sub,.poster-cta,.poster-brand,.user-text').forEach(x => x.removeAttribute('contenteditable')); return JSON.stringify({ html: clean.innerHTML, style: art.getAttribute('style') || '', layers: $('#layers').innerHTML, prompts: $$('.prompt-text').map(x => x.value), brand: $$('.brand-fields .field').map(x => x.value), references: $$('.upload-row img.thumb').map(img => ({ section: img.dataset.section || '', dataUrl: img.src })), adjustment: { ...adjustment } }); }
@@ -85,8 +96,12 @@
   function addLayerCard(el, label, type, shouldSelect = true) {
     el.id ||= 'canvas-object-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
     const layer = document.createElement('div'); layer.className = 'layer'; layer.dataset.target = el.id;
-    layer.innerHTML = '<div class="layer-thumb" style="background:linear-gradient(140deg,#e8e5f4,#cbc3e9)"></div><div class="layer-info"><div class="layer-name"></div><div class="layer-type"></div></div><span class="eye">◉</span>';
-    $('.layer-name', layer).textContent = label; $('.layer-type', layer).textContent = type; $('#layers').prepend(layer); bindLayerActions(); layerCount(); updateCanvasStacking(); if (shouldSelect) select(el); queueSave();
+    layer.innerHTML = '<div class="layer-thumb"></div><div class="layer-info"><div class="layer-name"></div><div class="layer-type"></div></div><span class="eye">◉</span>';
+    $('.layer-name', layer).textContent = label; $('.layer-type', layer).textContent = type; $('#layers').prepend(layer); bindLayerActions(); layerCount(); updateCanvasStacking(); refreshLayerThumbnails(); if (shouldSelect) select(el); queueSave();
+  }
+  function setLayerCard(el, label, type) {
+    el.id ||= 'canvas-object-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+    const old = layers().find(layer => targetFor(layer) === el); if (old) old.remove(); addLayerCard(el, label, type, false);
   }
   function addText(x, y) {
     const el = document.createElement('div'); el.className = 'user-text'; el.dataset.canvasObject = 'true'; el.contentEditable = 'true'; el.spellcheck = false; el.textContent = 'Double-click to edit';
@@ -128,13 +143,20 @@
       const data = await response.json(); if (!response.ok) throw new Error(data.error || 'AI generation failed');
       const previous = $('.ai-generated-bg', art); if (previous) { layers().find(x => targetFor(x) === previous)?.remove(); previous.remove(); }
       const sourceBackground = $('.art-bg', art); if (sourceBackground) sourceBackground.style.background = 'transparent'; sourceBackground.style.visibility = 'hidden';
+      if (!data.image) throw new Error(data.concept ? 'Ollama returned art direction only. Choose an image-generation provider to create the final picture.' : 'The AI returned no image.');
       const bg = document.createElement('div'); bg.className = 'ai-generated-bg'; bg.dataset.canvasObject = 'true'; bg.style.cssText = 'position:absolute;inset:0;z-index:0';
       const img = document.createElement('img'); img.src = data.image; img.alt = 'AI generated artwork'; img.style.cssText = 'width:100%;height:100%;object-fit:cover'; bg.appendChild(img); art.insertBefore(bg, art.firstChild);
       const lines = String(sections.copy).split(/\r?\n/).map(x => x.trim()).filter(Boolean);
-      if (lines[0]) $('#headline').textContent = lines[0]; if (lines[1]) $('.poster-sub', art).textContent = lines[1]; if (lines[2]) $('.poster-cta', art).textContent = lines[2];
+      if (lines[0]) $('#headline').textContent = lines[0]; const generatedSub = $('.poster-sub', art); generatedSub.id ||= 'posterSub'; if (lines[1]) generatedSub.textContent = lines[1]; if (lines[2]) $('.poster-cta', art).textContent = lines[2];
       const brandName = $$('.brand-fields .field')[2]?.value.trim(); if (brandName) $('.poster-brand', art).textContent = brandName;
       if (/sans/i.test(sections.typography)) $('#headline').style.fontFamily = 'Inter, Arial, sans-serif'; else if (/serif/i.test(sections.typography)) $('#headline').style.fontFamily = 'Georgia, serif';
-      $$('.poster-copy,.poster-cta,.poster-brand', art).forEach(x => x.style.zIndex = '3'); addLayerCard(bg, data.demo ? 'Demo artwork' : 'AI artwork', 'Generated image · Editable layer'); toast(data.demo ? 'Demo artwork generated · no API key needed' : 'AI artwork added as its own layer');
+      $$('.poster-copy,.poster-cta,.poster-brand', art).forEach(x => x.style.zIndex = '3');
+      setLayerCard(bg, data.demo ? 'Generated artwork' : 'AI artwork', 'Design direction · Editable image');
+      setLayerCard($('#headline'), 'AI headline', 'Typography + copy · Editable');
+      setLayerCard(generatedSub, 'AI supporting copy', 'Typography + copy · Editable');
+      setLayerCard($('.poster-cta', art), 'AI call to action', 'Ad copy · Editable');
+      setLayerCard($('.poster-brand', art), 'Brand descriptor', 'Brand details · Editable');
+      refreshLayerThumbnails(); toast(data.demo ? 'Generated artwork and editable copy layers added' : 'AI artwork and editable copy layers added');
     } catch (err) { toast(err.message); }
     finally { button.innerHTML = prior; button.disabled = false; queueSave(); }
   }
@@ -311,9 +333,15 @@
   $('#quickPng').onclick = () => exportDesign('png'); $('#quickZoom').onclick = () => setZoom(100);
   $('#zoomIn').onclick = () => setZoom(zoom + 10); $('#zoomOut').onclick = () => setZoom(zoom - 10); $('#zoomFit').onclick = () => setZoom(100);
   $('.canvas-stage').addEventListener('wheel', e => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(zoom + (e.deltaY < 0 ? 10 : -10)); } }, { passive: false });
-  $('#addColor').onclick = () => { const input = document.createElement('input'); input.type = 'color'; input.oninput = () => { if (!active) return; if (active.classList.contains('user-shape')) active.style.backgroundColor = input.value; else if (active.classList.contains('user-brush')) $('path', active).setAttribute('stroke', input.value); else if (active.classList.contains('user-image')) $('img', active).style.filter = `drop-shadow(0 0 0 ${input.value})`; else active.style.color = input.value; }; input.onchange = queueSave; input.click(); };
+  function setCanvasColor(color) {
+    art.style.backgroundColor = color;
+    const base = $('.art-bg', art); if (base) { base.style.background = color; const image = $('img', base); if (image) image.style.opacity = '0'; }
+    $('#canvasColor').value = color; refreshLayerThumbnails(); queueSave(); toast('Canvas background updated');
+  }
+  $('#canvasColor').oninput = e => setCanvasColor(e.target.value);
+  $('#moreColors').onclick = () => $('#canvasColor').click();
+  $$('.palette-color').forEach(button => button.onclick = () => setCanvasColor(button.dataset.color));
   $$('.left-heading .iconbtn').forEach(button => button.onclick = () => toast('Shortcuts: Ctrl/⌘ + Z undo · Ctrl/⌘ + scroll zoom · Delete removes the selected layer'));
-  $$('.subhead .iconbtn').filter(button => button.title.includes('More color')).forEach(button => button.onclick = () => $('#addColor').click());
   function renderAssetPanel() {
     const panel = $('#dockAssets'); panel.replaceChildren(); const assets = $$('.upload-row img.thumb');
     if (!assets.length) { const empty = document.createElement('span'); empty.className = 'upload-hint'; empty.textContent = 'Uploaded references and logos will appear here.'; panel.append(empty); return; }
@@ -340,6 +368,12 @@
     if ((e.key === 'Delete' || e.key === 'Backspace') && active && !e.target.isContentEditable && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) { e.preventDefault(); deleteSelectedLayer(); }
   });
   window.addEventListener('beforeunload', save);
-  loadSaved(); art.querySelectorAll(':scope > *').forEach((el, i) => { el.dataset.canvasObject = 'true'; el.dataset.objectId ||= el.id || el.classList[0] || `object-${i}`; }); bindLayerActions(); layerCount(); fitArtboard(); new ResizeObserver(fitArtboard).observe($('.canvas-stage')); recordHistory(); save(); refreshProjectPicker();
+  let registering = false;
+  function setAuthMode() { $('#authTitle').textContent = registering ? 'Create account' : 'Sign in'; $('#authDescription').textContent = registering ? 'Create your My Designer identity.' : 'Access your My Designer workspace.'; $('#authName').classList.toggle('hidden', !registering); $('#authSubmit').textContent = registering ? 'Create account' : 'Sign in'; $('#authSwitch').textContent = registering ? 'I already have an account' : 'Create an account instead'; $('#authMessage').textContent = ''; }
+  function showAuth() { $('#authModal').classList.remove('hidden'); setAuthMode(); $('#authEmail').focus(); }
+  async function refreshAuth() { try { const r = await fetch('/api/auth/me', { credentials: 'same-origin' }); const data = await r.json(); if (data.user) { $('#authButton').textContent = (data.user.name || data.user.email).slice(0, 2).toUpperCase(); $('#authButton').title = `${data.user.email} · signed in`; } } catch {} }
+  $('#authButton').onclick = showAuth; $('#closeAuth').onclick = () => $('#authModal').classList.add('hidden'); $('#authSwitch').onclick = () => { registering = !registering; setAuthMode(); };
+  $('#authSubmit').onclick = async () => { const email = $('#authEmail').value.trim(), password = $('#authPassword').value, name = $('#authName').value.trim(); $('#authMessage').textContent = ''; if (!email || !password || (registering && !name)) { $('#authMessage').textContent = 'Please complete the required fields.'; return; } const button = $('#authSubmit'); button.disabled = true; try { const r = await fetch(registering ? '/api/auth/register' : '/api/auth/login', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password, name }) }); const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Could not complete that request.'); $('#authModal').classList.add('hidden'); $('#authPassword').value = ''; await refreshAuth(); toast(registering ? 'Account created' : 'Signed in'); } catch (error) { $('#authMessage').textContent = error.message; } finally { button.disabled = false; } };
+  loadSaved(); art.querySelectorAll(':scope > *').forEach((el, i) => { el.dataset.canvasObject = 'true'; el.dataset.objectId ||= el.id || el.classList[0] || `object-${i}`; }); bindLayerActions(); layerCount(); refreshLayerThumbnails(); fitArtboard(); new ResizeObserver(fitArtboard).observe($('.canvas-stage')); recordHistory(); save(); refreshProjectPicker(); refreshAuth();
   fetch('/api/status').then(r => r.json()).then(s => { const keyName = s.provider === 'gemini' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY'; $('.ai-badge').textContent = s.demoMode ? '✦ DEMO MODE' : s.aiConfigured ? '✦ AI READY' : '✦ ADD API KEY'; $('.ai-badge').title = s.demoMode ? 'Local demo generator is active. Set AI_PROVIDER=gemini or openai to connect an image model.' : s.aiConfigured ? `${s.provider} image generation is configured` : `Set ${keyName} in .env to enable generation`; }).catch(() => { $('.ai-badge').textContent = '✦ START SERVER'; });
 })();

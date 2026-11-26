@@ -46,6 +46,19 @@ function json(res, code, data) {
 }
 const sessionCookie = 'my_designer_preview';
 const sessionLifetime = 7 * 24 * 60 * 60;
+const authCookie = 'my_designer_auth';
+const authLifetime = 30 * 24 * 60 * 60;
+const authSecret = process.env.AUTH_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+const usersPath = path.join(root, process.env.USERS_FILE || 'data', 'users.json');
+function cookies(req) { return Object.fromEntries(String(req.headers.cookie || '').split(';').map(part => part.trim().split('=').map(decodeURIComponent)).filter(([key]) => key)); }
+function authSignature(value) { return crypto.createHmac('sha256', authSecret).update(value).digest('base64url'); }
+function authToken(user) { const payload = Buffer.from(JSON.stringify({ id: user.id, email: user.email, name: user.name, exp: Math.floor(Date.now() / 1000) + authLifetime })).toString('base64url'); return `${payload}.${authSignature(payload)}`; }
+function authUser(req) { try { const token = cookies(req)[authCookie]; if (!token) return null; const [payload, signature] = token.split('.'); if (!payload || !signature || !equalSecret(signature, authSignature(payload))) return null; const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); return data.exp > Math.floor(Date.now() / 1000) ? { id: data.id, email: data.email, name: data.name } : null; } catch { return null; } }
+function readUsers() { try { return JSON.parse(fs.readFileSync(usersPath, 'utf8')); } catch { return []; } }
+function writeUsers(users) { fs.mkdirSync(path.dirname(usersPath), { recursive: true }); fs.writeFileSync(usersPath, JSON.stringify(users, null, 2), { mode: 0o600 }); }
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) { return { salt, hash: crypto.scryptSync(password, salt, 64).toString('hex') }; }
+function validEmail(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email); }
+function authResponse(req, res, user) { const secure = req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''; res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'set-cookie': `${authCookie}=${authToken(user)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${authLifetime}${secure}` }); res.end(JSON.stringify({ user: { id: user.id, email: user.email, name: user.name } })); }
 function privatePreviewRequired() { return process.env.PRIVATE_DEMO === 'true' || Boolean(process.env.DEMO_PASSWORD); }
 function sessionSignature(timestamp) { return crypto.createHmac('sha256', process.env.DEMO_PASSWORD || '').update(timestamp).digest('hex'); }
 function equalSecret(a, b) { const left = Buffer.from(String(a)); const right = Buffer.from(String(b)); return left.length === right.length && crypto.timingSafeEqual(left, right); }
@@ -201,6 +214,25 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ ok: true }));
     } catch (error) { return json(res, 400, { error: error.message }); }
   }
+  if (req.method === 'GET' && url.pathname === '/api/auth/me') return json(res, 200, { user: authUser(req) });
+  if (req.method === 'POST' && url.pathname === '/api/auth/register') {
+    try {
+      const body = await readBody(req, 16 * 1024), email = String(body.email || '').trim().toLowerCase(), name = String(body.name || '').trim().slice(0, 80), password = String(body.password || '');
+      if (!name || !validEmail(email) || password.length < 10) return json(res, 400, { error: 'Enter your name, a valid email, and a password of at least 10 characters.' });
+      const users = readUsers(); if (users.some(user => user.email === email)) return json(res, 409, { error: 'An account already exists for that email.' });
+      const passwordRecord = hashPassword(password), user = { id: crypto.randomUUID(), email, name, ...passwordRecord, createdAt: new Date().toISOString() };
+      users.push(user); writeUsers(users); return authResponse(req, res, user);
+    } catch (error) { return json(res, 400, { error: error.message || 'Could not create the account.' }); }
+  }
+  if (req.method === 'POST' && url.pathname === '/api/auth/login') {
+    try {
+      const body = await readBody(req, 16 * 1024), email = String(body.email || '').trim().toLowerCase(), password = String(body.password || ''), user = readUsers().find(row => row.email === email);
+      if (!user) return json(res, 401, { error: 'Email or password is not correct.' });
+      const candidate = hashPassword(password, user.salt).hash; if (!equalSecret(candidate, user.hash)) return json(res, 401, { error: 'Email or password is not correct.' });
+      return authResponse(req, res, user);
+    } catch (error) { return json(res, 400, { error: error.message || 'Could not sign in.' }); }
+  }
+  if (req.method === 'POST' && url.pathname === '/api/auth/logout') { res.writeHead(204, { 'set-cookie': `${authCookie}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0; Secure` }); return res.end(); }
   const authorized = hasPreviewSession(req);
   if (privatePreviewRequired() && !authorized && url.pathname !== '/api/login' && !url.pathname.startsWith('/assets/')) {
     if (url.pathname.startsWith('/api/')) return json(res, 401, { error: 'Enter the investor preview access code first.' });
