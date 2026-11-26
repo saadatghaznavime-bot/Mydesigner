@@ -20,6 +20,22 @@ The editor and demo generator work without an API key. Demo generation creates l
 
 The default Gemini model is Nano Banana 2 (`gemini-3.1-flash-image`). The key stays on the Node server and is never sent to the browser. Each Generate request sends the brief and uploaded reference images to Gemini; its output is added as a separate editable image layer while copy and logos remain separately editable. Gemini image generation has no free API tier; check Google's current pricing before enabling it. You can use `AI_PROVIDER=openai` and `OPENAI_API_KEY` instead.
 
+## Connect local Ollama
+
+The server can use Ollama for text-based art direction. This is separate from image generation: Ollama's chat endpoint returns a design concept, while the existing demo/Gemini/OpenAI paths produce the canvas image layer.
+
+1. Install and start Ollama on the same computer as the Node server.
+2. Confirm the models with `ollama list` (for example `qwen3:4b` and `qwen2.5:3b`).
+3. Copy `.env.example` to `.env` and set:
+   ```env
+   AI_PROVIDER=ollama
+   OLLAMA_URL=http://127.0.0.1:11434
+   OLLAMA_MODEL=qwen3:4b
+   ```
+4. Restart `node server.js`. The app can retrieve installed model names from `/api/ollama/models`.
+
+**Important:** a hosted Render instance cannot reach Ollama on your personal computer through `127.0.0.1`. For a public deployment, use an Ollama server reachable from the Render service over a secured network, or keep AI processing local. Do not expose an unauthenticated Ollama port to the public internet.
+
 ## Private investor preview
 
 The Render Blueprint in `render.yaml` runs the demo generator and requires a password. Deploy it as a new Blueprint from a **private source repository**. During setup, set the secret `DEMO_PASSWORD` in Render; `PRIVATE_DEMO=true` is already enabled. Share the generated `onrender.com` URL and the access code with the investor separately. The source is not hosted in the existing public `pin-pitch` repository.
