@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: my-designer-demo
+    runtime: node
+    plan: free
+    buildCommand: echo "No dependencies to install"
+    startCommand: node server.js
+    envVars:
+      - key: AI_PROVIDER
+        value: demo
+      - key: PRIVATE_DEMO
+        value: "true"
+      - key: DEMO_PASSWORD
+        sync: false
+      - key: HOST
+        value: 0.0.0.0
