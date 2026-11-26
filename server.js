@@ -149,7 +149,7 @@ async function generateWithGemini(brief) {
 }
 
 async function ollamaRequest(pathname, options = {}) {
-  const base = String(process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\\/+$/, '');
+  const base = String(process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
   const response = await fetch(base + pathname, { ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `Ollama returned ${response.status}.`);
