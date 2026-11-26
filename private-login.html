@@ -26,7 +26,7 @@
   </main>
   <script>
     const form=document.getElementById('unlockForm'),input=document.getElementById('accessCode'),button=document.getElementById('submitButton'),error=document.getElementById('error');
-    form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;button.textContent='Checking access…';error.textContent='';try{const response=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify({password:input.value})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not unlock preview.');location.replace('/')}catch(err){error.textContent=err.message;button.disabled=false;button.innerHTML='Open private preview&nbsp; ↗';input.select()}});
+    form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;button.textContent='Checking access…';error.textContent='';try{const response=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',body:JSON.stringify({password:input.value})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not unlock preview.');location.replace('./')}catch(err){error.textContent=err.message;button.disabled=false;button.innerHTML='Open private preview&nbsp; ↗';input.select()}});
   </script>
 </body>
 </html>
